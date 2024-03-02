@@ -1,0 +1,279 @@
+import os
+import ast
+import requests
+import asyncio
+
+from typing import Optional
+from enum import Enum, auto
+
+import pandas as pd
+
+from interopt.runner.grpc_runner import run_config
+from interopt.runner.model import load_models
+from interopt.definition import ProblemDefinition
+
+class TabularDataset:
+    def __init__(self, benchmark_name, dataset, parameter_names, objectives):
+        self.objectives = objectives
+        success = self.ensure_dataset_downloaded(benchmark_name, dataset)
+        if success:
+            file_path = f'datasets/{benchmark_name}_{dataset}.csv'
+            self.tab = pd.read_csv(file_path).dropna()
+            print(self.tab)
+        else:
+            self.tab = pd.DataFrame(columns=parameter_names + objectives)
+        #self.load_and_prepare_dataset(parameter_names)
+        self.query_tab = self.tab.copy()
+        #print(self.query_tab)
+        self.query_tab.set_index(parameter_names, inplace=True)
+        self.query_tab.sort_index(inplace=True)
+
+    #def load_and_prepare_dataset(self, parameter_names):
+        #self.tab['energy_consumptions'] = self.tab['energy_consumptions'].apply(
+        #    ast.literal_eval)
+        #self.tab['energy'] = self.tab['energy_consumptions'].apply(
+        #    lambda x: sum(x)/len(x) if len(x) > 0 else 0)
+        # Set the index for the query_tab, modify as needed for each benchmark
+
+
+    def ensure_dataset_downloaded(self, benchmark_name, dataset):
+        filename = f"{benchmark_name}_{dataset}.csv"
+        url = f"https://raw.githubusercontent.com/odgaard/bacobench_data/main/{filename}"  # URL of the file on Github
+        #url = f'http://bacobench.s3.amazonaws.com/{filename}'  # URL of the file in S3
+        if not os.path.exists('datasets'):
+            os.mkdir('datasets')
+        file_path = f'datasets/{filename}'
+        success = True
+        if not os.path.exists(file_path):
+            success = TabularDataset.download_file(url, file_path)
+        return success
+
+    @staticmethod
+    def download_file(url, local_file_path):
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()  # Will raise an exception for 4XX/5XX errors
+            with open(local_file_path, 'wb') as f:
+                f.write(response.content)
+            print(f"Downloaded {local_file_path}")
+            return True
+        except requests.exceptions.HTTPError as e:
+            print(f"Failed to download {url}: {e}")
+            return False
+
+    def query(self, query_dict) -> Optional[pd.Series]:
+        #print(f"Query: {query_dict}")
+        #print(f"Index: {self.query_tab.index.names}")
+        query_tuple = tuple(query_dict[col] for col in self.query_tab.index.names)
+        if query_tuple in self.query_tab.index:
+            print("Using tabular data")
+            query_result: pd.Series = self.query_tab.loc[query_tuple][self.objectives]
+            return query_result
+        #print("Query not found in tabular data")
+        return None
+
+
+class SoftwareQuery:
+    def __init__(self, benchmark_name, dataset, parameter_names, objectives,
+                 enable_tabular, enable_model):
+        self.tabular_dataset = TabularDataset(
+            benchmark_name, dataset, parameter_names, objectives)
+        if enable_model:
+            self.models = load_models(
+                self.tabular_dataset.query_tab, benchmark_name, dataset,
+                objectives, parameter_names)
+        self.query_tab = self.tabular_dataset.query_tab
+        self.enable_tabular = enable_tabular
+        self.enable_model = enable_model
+        #print(f"Enable tabular: {enable_tabular}")
+        #print(f"Enable model: {enable_model}")
+
+    def get_objectives(self):
+        return self.tabular_dataset.objectives
+
+    async def query_software(self, query_dict: dict) -> Optional[pd.DataFrame]:
+        # Use the tabular data, query is available in the table
+        query_result = pd.DataFrame()
+        #print(f"Query: {query_dict}, {self.enable_tabular}, {self.enable_model}")
+        if self.enable_tabular:
+            query_result = self.tabular_dataset.query(query_dict)
+            #print(f"Query result: {query_result}")
+        if query_result is None and self.enable_model:
+            # Use surrogate model, query is not available in the table
+            query_result: pd.Series = self.query_model(query_dict)
+            #print(f"Query result: {query_result}")
+
+        if query_result is not None:
+            return query_result.to_frame().T
+
+        return None
+
+    def query_model(self, query_dict) -> pd.Series:
+        model_query_dict = self.convert_permutation_to_tuple(query_dict, 'permutation')
+
+        print("Using surrogate model")
+        results = [self.models[objective].predict(pd.DataFrame([model_query_dict]))[0]
+                   for objective in self.get_objectives()]
+
+        return pd.DataFrame([results], columns=self.get_objectives(),
+                          index=[tuple(query_dict.values())]).iloc[0]
+
+    def convert_permutation_to_tuple(self, query_dict: dict, param: str) -> list[int]:
+        new_dict = query_dict.copy()
+        tuple_str = ast.literal_eval(new_dict[param])
+        for i, value in enumerate(tuple_str):
+            new_dict[f'tuple_{param}_{i}'] = value
+        del new_dict[param]
+        return new_dict
+
+
+class OperationMode(Enum):
+    CLIENT = auto()
+    INTEROP_SERVER = auto()
+
+class QueueHandler:
+    def __init__(self, grpc_urls: list[str]):
+        self.grpc_urls = grpc_urls
+        self.queue = asyncio.Queue()
+        self.server_availability = {url: True for url in self.grpc_urls}
+        self.available_server_event = asyncio.Event()
+        self.available_server_event.set()
+        self.lock = asyncio.Lock()
+
+    async def get_available_server_url(self):
+        await self.available_server_event.wait()  # Wait until a server is available
+        async with self.lock:
+            for url, is_available in self.server_availability.items():
+                if is_available:
+                    self.server_availability[url] = False  # Mark the server as busy
+                    if not any(self.server_availability.values()):  # Check if all servers are now busy
+                        self.available_server_event.clear()  # Clear the event to wait again
+                    return url
+
+
+    async def mark_server_as_available(self, url):
+        async with self.lock:
+            self.server_availability[url] = True
+            self.available_server_event.set()  # Signal that at least one server is available
+
+class GRPCQuery:
+    def __init__(self, grpc_urls, parameters,
+                 objectives):
+        self.parameters = parameters
+        self.objectives = objectives
+        self.queue_handler = QueueHandler(grpc_urls)
+
+    async def send_queries_to_servers(self, query: dict) -> dict:
+        return await self.send_query(query)
+
+    async def send_query(self, query: dict) -> dict:
+        url = await self.queue_handler.get_available_server_url()
+        try:
+            #print(f"Sending query to {url}")
+            result = await run_config(query, self.parameters, url)
+            return result
+        finally:
+            await self.queue_handler.mark_server_as_available(url)
+
+    async def query_hardware(self, query: dict) -> pd.DataFrame:
+        # Implement or override as needed
+        result = await self.send_queries_to_servers(query)
+        result = await self.process_grpc_results(result, query)
+        return result
+
+    async def process_grpc_results(self, result: dict, query: dict) -> pd.DataFrame:
+        df_results = pd.DataFrame()
+        #print(f"Results 3: {result}")
+        j = 0
+        r_dict = {}
+        if len(result) == 0:
+            df = pd.DataFrame([r_dict], columns=self.objectives, index=[tuple(query.values())])
+            return df
+        r_dict['compute_time'] = result[0][j]
+        #r_dict['energy'] = result[2][j]
+        values = [r_dict['compute_time']]
+        columns = [self.objectives[0]]
+        indices = [tuple(query.values())]
+        #print(f"R_dict: {r_dict}")
+        #print(f"Values: {values}")
+        #print(f"Objectives: {self.objectives}")
+        #print(f"Index: {indices}")
+
+        df_temp = pd.DataFrame(values,
+                           columns=columns,
+                           index=indices)
+        #print(f"Results 4: {df_temp}")
+        df_results = pd.concat([df_results, df_temp])
+        #print(f"Results 5: {df_results}")
+        return df_results
+
+class Study():
+    tab = None
+    query_tab = None
+    models = None
+
+    def __init__(self, benchmark_name: str, definition: ProblemDefinition,
+                 enable_tabular: bool, dataset, objectives, server_address="localhost",
+                 port=50051, url="", enable_model: bool = True):
+        self.benchmark_name = benchmark_name
+        self.grpc_urls = [f"{server_address}:{port}" if url == "" else url]
+        self.objectives = objectives
+        self.enable_tabular = enable_tabular
+        self.enable_model = enable_model
+        self.dataset = dataset
+        self.definition = definition
+        self.parameters = definition.search_space.params
+        self.port = port
+
+        if self.enable_tabular or self.enable_model:
+            self.software_query = SoftwareQuery(
+                benchmark_name, dataset, self.get_parameter_names(), self.objectives,
+                enable_tabular=self.enable_tabular, enable_model=self.enable_model)
+        else:
+            self.software_query = None
+        self.grpc_query = GRPCQuery(self.grpc_urls, self.parameters, self.objectives)
+
+    def set_tabular(self, enable_tabular: bool):
+        self.enable_tabular = enable_tabular
+
+    def get_objectives(self):
+        return self.objectives
+
+    def query(self, query: dict) -> dict:
+        return asyncio.run(self.query_async(query))
+
+    async def query_async(self, query: dict) -> list[dict]:
+        #print(f"Queries: {query}")
+        return await self.query_choice(query)
+
+    async def query_choice(self, query: dict) -> dict:
+        # Directly call and await the appropriate method based on the condition
+        result = None
+        if self.enable_tabular:
+            result = await self.software_query.query_software(query.copy())
+            #print(f"Tab software result: {result}")
+        #print(f"Result: {result}")
+        if result is None:
+            result = await self.grpc_query.query_hardware(query.copy())
+            #print(f"Tab result add: {result}")
+            df: pd.DataFrame = self.software_query.tabular_dataset.query_tab
+            df = pd.concat([df, result])
+            #print(f"DF: {df}")
+            df.index.names = self.get_parameter_names()
+            #print(f"DF: {df}")
+            self.software_query.tabular_dataset.query_tab = df
+            #print(f"Added to tabular data: {result}")
+
+
+        # Process and return results
+        # return [results.iloc[0].to_dict() if len(queries) == 1 else results.T.to_dict()[tuple(query.values())] for query in queries]
+        return result.iloc[0].to_dict()
+
+    def get_parameter_names(self):
+        return [param.name for param in self.parameters]
+
+    def get_parameter_types(self):
+        return [param.param_type_enum for param in self.parameters]
+
+    def get_default_config(self):
+        return {param.name: param.default for param in self.parameters}
