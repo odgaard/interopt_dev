@@ -213,10 +213,12 @@ class Study():
     models = None
 
     def __init__(self, benchmark_name: str, definition: ProblemDefinition,
-                 enable_tabular: bool, dataset, objectives, server_address="localhost",
-                 port=50051, url="", enable_model: bool = True):
+                 enable_tabular: bool, dataset, objectives,
+                 server_addresses: list[str] = ["localhost"], port=50051, url="",
+                 enable_model: bool = True):
         self.benchmark_name = benchmark_name
-        self.grpc_urls = [f"{server_address}:{port}" if url == "" else url]
+        #self.grpc_urls = [f"{server_address}:{port}" if url == "" else url]
+        self.grpc_urls = [f"{server_address}:{port}" for server_address in server_addresses]
         self.objectives = objectives
         self.enable_tabular = enable_tabular
         self.enable_model = enable_model
