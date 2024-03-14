@@ -38,16 +38,12 @@ async def run_config(query_dict: dict, parameters: list[Param], grpc_url: str):
         if name not in parameter_names:
             raise ValueError(f"Unknown parameter: {name}")
         query_dict_list.append([name, value, parameter_types[parameter_names.index(name)]])
-    #print(f"Parameter names: {parameter_names}")
-    #print(f"Query_dict: {query_dict}")
-    #print(f"Query_dict_list: {query_dict_list}")
     query_dict_grpc = {
         name: value_to_param(value, param_type)
-        for name, value, param_type in query_dict_list #zip(parameter_names, query_dict.values(), parameter_types)
+        for name, value, param_type in query_dict_list
     }
-    #print(f"Query_dict_grpc: {query_dict_grpc}")
     config = cs.Configuration(parameters=query_dict_grpc)
-    result = []
+    result = {}
 
     async with grpc.aio.insecure_channel(grpc_url) as channel:
         stub = cs_grpc.ConfigurationServiceStub(channel)
@@ -56,12 +52,11 @@ async def run_config(query_dict: dict, parameters: list[Param], grpc_url: str):
             output_data_file="test"
         )
         try:
-            #print(f"Sending request: {request}")
-            #print(f"Sending request: {request}")
             response = await stub.RunConfigurationsClientServer(request)
-            #print(f"Received response: {response}")
-            #print(response)
-            result = [metric.values for metric in response.metrics]
+            print(f"Received response: {response}")
+            for metric in response.metrics:
+                result[metric.name] = metric.values
+            print(f"Received result: {result}")
         except grpc.aio.AioRpcError as e:
             print(e.with_traceback(None))
             # Extracting the status code

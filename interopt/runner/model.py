@@ -1,10 +1,12 @@
 import ast
 import os
 
+import numpy as np
+
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-from autogluon.tabular import TabularDataset, TabularPredictor
+#from autogluon.tabular import TabularDataset, TabularPredictor
 from catboost import CatBoostRegressor
 
 def load_catboost_models(tab, benchmark_name, dataset, objectives, features):
@@ -68,6 +70,8 @@ def train_model(input_tab, objective, benchmark_name, in_features):
     X = tab[features]
 
     y = tab[objective]
+    # Convert the y vector into a log scale
+    y = np.log(y)
 
     # Splitting the dataset
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -80,7 +84,7 @@ def train_model(input_tab, objective, benchmark_name, in_features):
         catboost_model.fit(X_train, y_train)
         y_pred = catboost_model.predict(X_test)
     else:
-        # Autogluon expects the complete dataframe as input, e.g. both X and Y in one dataframe 
+        # Autogluon expects the complete dataframe as input, e.g. both X and Y in one dataframe
         df_train = X_train.copy()
         df_train[objective] = y_train
         print(df_train.head(), df_train.shape, df_train.columns)

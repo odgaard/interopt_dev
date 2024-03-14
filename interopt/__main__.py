@@ -12,7 +12,7 @@ def main():
     args = parser.parse_args()
     study = Study(benchmark_name='spmm', definition=get_spmm_definition(),
                   enable_tabular=True, enable_model=True, dataset='10k',
-                  objectives=['compute_time'], server_address=args.servers)
+                  objectives=['compute_time'], server_addresses=args.servers)
     server = Server(study, port=50050)
     server.start()
     #print(study.query({

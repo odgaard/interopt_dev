@@ -65,7 +65,10 @@ class ConfigurationServiceServicer(cs_grpc.ConfigurationServiceServicer):
         #    cs.Metric(values=metric)
         #    for metric in result
         #]
-        metrics = [cs.Metric(values=[result['compute_time']])]
+        metrics = []
+        for obj in self.study.enabled_objectives:
+            metrics.append(cs.Metric(name=obj, values=[result[obj]]))
+        #metrics = [cs.Metric(values=[result['compute_time']])]
         #print(f"Metrics: {metrics}")
         return cs.ConfigurationResponse(
             metrics=metrics,

@@ -7,6 +7,7 @@ from typing import Optional
 from enum import Enum, auto
 
 import pandas as pd
+import numpy as np
 
 from interopt.runner.grpc_runner import run_config
 from interopt.runner.model import load_models
@@ -74,14 +75,14 @@ class TabularDataset:
 
 
 class SoftwareQuery:
-    def __init__(self, benchmark_name, dataset, parameter_names, objectives,
+    def __init__(self, benchmark_name, dataset, parameter_names, enabled_objectives,
                  enable_tabular, enable_model):
         self.tabular_dataset = TabularDataset(
-            benchmark_name, dataset, parameter_names, objectives)
+            benchmark_name, dataset, parameter_names, enabled_objectives)
         if enable_model:
             self.models = load_models(
                 self.tabular_dataset.query_tab, benchmark_name, dataset,
-                objectives, parameter_names)
+                enabled_objectives, parameter_names)
         self.query_tab = self.tabular_dataset.query_tab
         self.enable_tabular = enable_tabular
         self.enable_model = enable_model
@@ -115,6 +116,9 @@ class SoftwareQuery:
         results = [self.models[objective].predict(pd.DataFrame([model_query_dict]))[0]
                    for objective in self.get_objectives()]
 
+        # Convert from log scale back to normal
+        results = [np.exp(result) for result in results]
+
         return pd.DataFrame([results], columns=self.get_objectives(),
                           index=[tuple(query_dict.values())]).iloc[0]
 
@@ -141,15 +145,15 @@ class QueueHandler:
         self.lock = asyncio.Lock()
 
     async def get_available_server_url(self):
-        await self.available_server_event.wait()  # Wait until a server is available
-        async with self.lock:
-            for url, is_available in self.server_availability.items():
-                if is_available:
-                    self.server_availability[url] = False  # Mark the server as busy
-                    if not any(self.server_availability.values()):  # Check if all servers are now busy
-                        self.available_server_event.clear()  # Clear the event to wait again
-                    return url
-
+        while True:
+            async with self.lock:
+                for url, is_available in self.server_availability.items():
+                    if is_available:
+                        self.server_availability[url] = False  # Mark the server as busy
+                        if not any(self.server_availability.values()): # Check if all servers are now busy
+                            self.available_server_event.clear()  # Clear the event to wait again
+                        return url # If no available servers found, wait for one to become available
+            await self.available_server_event.wait()
 
     async def mark_server_as_available(self, url):
         async with self.lock:
@@ -158,9 +162,10 @@ class QueueHandler:
 
 class GRPCQuery:
     def __init__(self, grpc_urls, parameters,
-                 objectives):
+                 enabled_objectives, definition: ProblemDefinition):
         self.parameters = parameters
-        self.objectives = objectives
+        self.enabled_objectives = enabled_objectives
+        self.definition = definition
         self.queue_handler = QueueHandler(grpc_urls)
 
     async def send_queries_to_servers(self, query: dict) -> dict:
@@ -183,28 +188,19 @@ class GRPCQuery:
 
     async def process_grpc_results(self, result: dict, query: dict) -> pd.DataFrame:
         df_results = pd.DataFrame()
-        #print(f"Results 3: {result}")
-        j = 0
-        r_dict = {}
         if len(result) == 0:
-            df = pd.DataFrame([r_dict], columns=self.objectives, index=[tuple(query.values())])
+            df = pd.DataFrame(
+                [{}], columns=self.enabled_objectives, index=[tuple(query.values())])
             return df
-        r_dict['compute_time'] = result[0][j]
-        #r_dict['energy'] = result[2][j]
-        values = [r_dict['compute_time']]
-        columns = [self.objectives[0]]
-        indices = [tuple(query.values())]
-        #print(f"R_dict: {r_dict}")
-        #print(f"Values: {values}")
-        #print(f"Objectives: {self.objectives}")
-        #print(f"Index: {indices}")
 
-        df_temp = pd.DataFrame(values,
-                           columns=columns,
-                           index=indices)
-        #print(f"Results 4: {df_temp}")
+        values = [result[e][0] for e in self.enabled_objectives]
+        indices = [tuple(query.values())]
+        columns = self.enabled_objectives
+        print(values, columns, indices)
+        df_temp = pd.DataFrame([values], columns=columns, index=indices)
+        print(df_temp)
         df_results = pd.concat([df_results, df_temp])
-        #print(f"Results 5: {df_results}")
+        print(df_results)
         return df_results
 
 class Study():
@@ -213,13 +209,13 @@ class Study():
     models = None
 
     def __init__(self, benchmark_name: str, definition: ProblemDefinition,
-                 enable_tabular: bool, dataset, objectives,
+                 enable_tabular: bool, dataset, enabled_objectives: list[str],
                  server_addresses: list[str] = ["localhost"], port=50051, url="",
                  enable_model: bool = True):
         self.benchmark_name = benchmark_name
         #self.grpc_urls = [f"{server_address}:{port}" if url == "" else url]
         self.grpc_urls = [f"{server_address}:{port}" for server_address in server_addresses]
-        self.objectives = objectives
+        self.enabled_objectives = enabled_objectives
         self.enable_tabular = enable_tabular
         self.enable_model = enable_model
         self.dataset = dataset
@@ -229,20 +225,26 @@ class Study():
 
         if self.enable_tabular or self.enable_model:
             self.software_query = SoftwareQuery(
-                benchmark_name, dataset, self.get_parameter_names(), self.objectives,
+                benchmark_name, dataset, self.get_parameter_names(),
+                enabled_objectives=self.enabled_objectives,
                 enable_tabular=self.enable_tabular, enable_model=self.enable_model)
         else:
             self.software_query = None
-        self.grpc_query = GRPCQuery(self.grpc_urls, self.parameters, self.objectives)
+        self.grpc_query = GRPCQuery(self.grpc_urls, self.parameters,
+                                    self.enabled_objectives, self.definition)
 
     def set_tabular(self, enable_tabular: bool):
         self.enable_tabular = enable_tabular
 
-    def get_objectives(self):
-        return self.objectives
+    def get_enabled_objectives(self):
+        return self.enabled_objectives
 
     def query(self, query: dict) -> dict:
-        return asyncio.run(self.query_async(query))
+        res = asyncio.run(self.query_async(query))
+        ret = {}
+        for k in self.enabled_objectives:
+            ret[k] = res[k]
+        return ret
 
     async def query_async(self, query: dict) -> list[dict]:
         #print(f"Queries: {query}")

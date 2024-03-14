@@ -1,22 +1,26 @@
 from typing import Union
 from interopt.parameter import Param, Constraint, string_to_param_type, param_type_to_class
 
-class Objective:
-    def __init__(self, name: str, minimize: bool):
+class Metric:
+    def __init__(self, name: str, index: int, singular: bool):
         self.name = name
+        self.index = index
+        self.singular = singular
+
+    @staticmethod
+    def from_dict(d: dict):
+        return Metric(d['name'], d['index'], d['singular'])
+
+class Objective:
+    def __init__(self, name: str, metric: Metric, minimize: bool):
+        self.name = name
+        assert self.name == metric.name
+        self.metric = metric
         self.minimize = minimize
 
     @staticmethod
     def from_dict(d: dict):
-        return Objective(d['name'], d['minimize'])
-
-class Metric:
-    def __init__(self, name: str):
-        self.name = name
-
-    @staticmethod
-    def from_dict(d: dict):
-        return Metric(d['name'])
+        return Objective(d['name'], d['metric'], d['minimize'])
 
 class SearchSpace():
     def __init__(self, params: Union[list[Param], list[dict]],
