@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Any, Union, Type, Callable
+import re
 
 class Configuration:
     def __init__(self, parameters: dict):
@@ -91,8 +92,10 @@ class Constraint:
 
     @staticmethod
     def _as_dict_string(input_str: str, variable_names: list[str]) -> str:
-        for var_name in variable_names:
-            input_str = input_str.replace(var_name, f"x['{var_name}']")
+        for var_name in sorted(variable_names, key=len, reverse=True):
+            pattern = r'\b' + re.escape(var_name) + r'\b'
+            replacement = f"x['{var_name}']"
+            input_str = re.sub(pattern, replacement, input_str)
         return input_str
 
     @staticmethod
