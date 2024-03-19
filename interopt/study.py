@@ -105,7 +105,8 @@ class SoftwareQuery:
             #print(f"Query result: {query_result}")
 
         if query_result is not None:
-            return query_result.to_frame().T
+            #return query_result.to_frame().T
+            return query_result
 
         return None
 
@@ -247,30 +248,21 @@ class Study():
         return ret
 
     async def query_async(self, query: dict) -> list[dict]:
-        #print(f"Queries: {query}")
         return await self.query_choice(query)
 
     async def query_choice(self, query: dict) -> dict:
-        # Directly call and await the appropriate method based on the condition
         result = None
         if self.enable_tabular:
             result = await self.software_query.query_software(query.copy())
-            #print(f"Tab software result: {result}")
-        #print(f"Result: {result}")
+            if result is not None:
+                result = result.to_frame().T
         if result is None:
             result = await self.grpc_query.query_hardware(query.copy())
-            #print(f"Tab result add: {result}")
             df: pd.DataFrame = self.software_query.tabular_dataset.query_tab
             df = pd.concat([df, result])
-            #print(f"DF: {df}")
             df.index.names = self.get_parameter_names()
-            #print(f"DF: {df}")
             self.software_query.tabular_dataset.query_tab = df
-            #print(f"Added to tabular data: {result}")
 
-
-        # Process and return results
-        # return [results.iloc[0].to_dict() if len(queries) == 1 else results.T.to_dict()[tuple(query.values())] for query in queries]
         return result.iloc[0].to_dict()
 
     def get_parameter_names(self):
