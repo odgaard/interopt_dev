@@ -254,7 +254,7 @@ class Study():
         result = None
         if self.enable_tabular:
             result = await self.software_query.query_software(query.copy())
-            if result is not None:
+            if isinstance(result, pd.Series):
                 result = result.to_frame().T
         if result is None:
             result = await self.grpc_query.query_hardware(query.copy())
