@@ -16,6 +16,7 @@ from interopt.definition import ProblemDefinition
 class TabularDataset:
     def __init__(self, benchmark_name, dataset, parameter_names, objectives, enable_download):
         self.objectives = objectives
+        self.tab = None
         if os.path.exists(f'datasets/{benchmark_name}_{dataset}.csv'):
             self.tab = pd.read_csv(f'datasets/{benchmark_name}_{dataset}.csv').dropna()
         elif enable_download:
@@ -24,7 +25,7 @@ class TabularDataset:
                 file_path = f'datasets/{benchmark_name}_{dataset}.csv'
                 self.tab = pd.read_csv(file_path).dropna()
                 print(self.tab)
-        else:
+        if self.tab is None:
             self.tab = pd.DataFrame(columns=parameter_names + objectives)
         #self.load_and_prepare_dataset(parameter_names)
         self.query_tab = self.tab.copy()
@@ -200,11 +201,11 @@ class GRPCQuery:
         values = [result[e][0] for e in self.enabled_objectives]
         indices = [tuple(query.values())]
         columns = self.enabled_objectives
-        print(values, columns, indices)
+        #print(values, columns, indices)
         df_temp = pd.DataFrame([values], columns=columns, index=indices)
-        print(df_temp)
+        #print(df_temp)
         df_results = pd.concat([df_results, df_temp])
-        print(df_results)
+        #print(df_results)
         return df_results
 
 class Study():

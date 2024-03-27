@@ -56,7 +56,7 @@ async def run_config(query_dict: dict, parameters: list[Param], grpc_url: str):
             #print(f"Received response: {response}")
             for metric in response.metrics:
                 result[metric.name] = metric.values
-            print(f"Received result: {result}")
+            #print(f"Received result: {result}")
         except grpc.aio.AioRpcError as e:
             print(e.with_traceback(None))
             # Extracting the status code
