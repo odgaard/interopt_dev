@@ -53,7 +53,7 @@ async def run_config(query_dict: dict, parameters: list[Param], grpc_url: str):
         )
         try:
             response = await stub.RunConfigurationsClientServer(request)
-            print(f"Received response: {response}")
+            #print(f"Received response: {response}")
             for metric in response.metrics:
                 result[metric.name] = metric.values
             print(f"Received result: {result}")

@@ -14,13 +14,16 @@ from interopt.runner.model import load_models
 from interopt.definition import ProblemDefinition
 
 class TabularDataset:
-    def __init__(self, benchmark_name, dataset, parameter_names, objectives):
+    def __init__(self, benchmark_name, dataset, parameter_names, objectives, enable_download):
         self.objectives = objectives
-        success = self.ensure_dataset_downloaded(benchmark_name, dataset)
-        if success:
-            file_path = f'datasets/{benchmark_name}_{dataset}.csv'
-            self.tab = pd.read_csv(file_path).dropna()
-            print(self.tab)
+        if os.path.exists(f'datasets/{benchmark_name}_{dataset}.csv'):
+            self.tab = pd.read_csv(f'datasets/{benchmark_name}_{dataset}.csv').dropna()
+        elif enable_download:
+            success = self.ensure_dataset_downloaded(benchmark_name, dataset)
+            if success:
+                file_path = f'datasets/{benchmark_name}_{dataset}.csv'
+                self.tab = pd.read_csv(file_path).dropna()
+                print(self.tab)
         else:
             self.tab = pd.DataFrame(columns=parameter_names + objectives)
         #self.load_and_prepare_dataset(parameter_names)
@@ -76,9 +79,9 @@ class TabularDataset:
 
 class SoftwareQuery:
     def __init__(self, benchmark_name, dataset, parameter_names, enabled_objectives,
-                 enable_tabular, enable_model):
+                 enable_tabular, enable_model, enable_download):
         self.tabular_dataset = TabularDataset(
-            benchmark_name, dataset, parameter_names, enabled_objectives)
+            benchmark_name, dataset, parameter_names, enabled_objectives, enable_download)
         if enable_model:
             self.models = load_models(
                 self.tabular_dataset.query_tab, benchmark_name, dataset,
@@ -212,7 +215,7 @@ class Study():
     def __init__(self, benchmark_name: str, definition: ProblemDefinition,
                  enable_tabular: bool, dataset, enabled_objectives: list[str],
                  server_addresses: list[str] = ["localhost"], port=50051, url="",
-                 enable_model: bool = True):
+                 enable_model: bool = True, enable_download: bool = True):
         self.benchmark_name = benchmark_name
         #self.grpc_urls = [f"{server_address}:{port}" if url == "" else url]
         self.grpc_urls = [f"{server_address}:{port}" for server_address in server_addresses]
@@ -228,7 +231,8 @@ class Study():
             self.software_query = SoftwareQuery(
                 benchmark_name, dataset, self.get_parameter_names(),
                 enabled_objectives=self.enabled_objectives,
-                enable_tabular=self.enable_tabular, enable_model=self.enable_model)
+                enable_tabular=self.enable_tabular, enable_model=self.enable_model,
+                enable_download=enable_download)
         else:
             self.software_query = None
         self.grpc_query = GRPCQuery(self.grpc_urls, self.parameters,
