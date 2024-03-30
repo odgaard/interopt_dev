@@ -17,21 +17,23 @@ class TabularDataset:
     def __init__(self, benchmark_name, dataset, parameter_names, objectives, enable_download):
         self.objectives = objectives
         self.tab = None
-        if os.path.exists(f'datasets/{benchmark_name}_{dataset}.csv'):
-            self.tab = pd.read_csv(f'datasets/{benchmark_name}_{dataset}.csv').dropna()
+        self.parameter_names = parameter_names
+        self.tab_path = f'datasets/{benchmark_name}_{dataset}.csv'
+        if os.path.exists(self.tab_path):
+            self.tab = pd.read_csv(self.tab_path).dropna()
         elif enable_download:
             success = self.ensure_dataset_downloaded(benchmark_name, dataset)
             if success:
-                file_path = f'datasets/{benchmark_name}_{dataset}.csv'
-                self.tab = pd.read_csv(file_path).dropna()
+                self.tab = pd.read_csv(self.tab_path).dropna()
                 print(self.tab)
         if self.tab is None:
-            self.tab = pd.DataFrame(columns=parameter_names + objectives)
+            multi_index = pd.MultiIndex.from_tuples([], names=self.parameter_names)
+            self.tab = pd.DataFrame(columns=parameter_names + objectives, index=multi_index)
+        else:
+            self.tab.set_index(parameter_names, inplace=True)
+            self.tab.sort_index(inplace=True)
         #self.load_and_prepare_dataset(parameter_names)
         self.query_tab = self.tab.copy()
-        #print(self.query_tab)
-        self.query_tab.set_index(parameter_names, inplace=True)
-        self.query_tab.sort_index(inplace=True)
 
     #def load_and_prepare_dataset(self, parameter_names):
         #self.tab['energy_consumptions'] = self.tab['energy_consumptions'].apply(
@@ -67,8 +69,6 @@ class TabularDataset:
             return False
 
     def query(self, query_dict) -> Optional[pd.Series]:
-        #print(f"Query: {query_dict}")
-        #print(f"Index: {self.query_tab.index.names}")
         query_tuple = tuple(query_dict[col] for col in self.query_tab.index.names)
         if query_tuple in self.query_tab.index:
             print("Using tabular data")
@@ -76,6 +76,25 @@ class TabularDataset:
             return query_result
         #print("Query not found in tabular data")
         return None
+
+    def write(self, result):
+        # Check if the CSV file exists
+        file_exists = os.path.isfile(self.tab_path)
+
+        # If file exists, append without header; otherwise, write with header
+        write_result = result.reset_index()
+        if file_exists:
+            write_result.to_csv(self.tab_path, mode='a', sep=",",
+                          index=False, header=False)
+        else:
+            write_result.to_csv(self.tab_path, mode='w', sep=",",
+                          index=False, header=True)
+
+    def add(self, result):
+        self.write(result)
+        self.query_tab = pd.concat([self.query_tab, result])
+
+
 
 
 class SoftwareQuery:
@@ -192,21 +211,19 @@ class GRPCQuery:
         return result
 
     async def process_grpc_results(self, result: dict, query: dict) -> pd.DataFrame:
-        df_results = pd.DataFrame()
+        # Create a MultiIndex with names
+        index_tuples = [tuple(query.values())]  # This will be a list of tuples
+
         if len(result) == 0:
-            df = pd.DataFrame(
-                [{}], columns=self.enabled_objectives, index=[tuple(query.values())])
-            return df
+            # Creating a MultiIndex without rows initially
+            multi_index = pd.MultiIndex.from_tuples([], names=list(query.keys()))
+
+            # Creating an empty DataFrame with a MultiIndex and specific columns
+            return pd.DataFrame(columns=self.enabled_objectives, index=multi_index)
 
         values = [result[e][0] for e in self.enabled_objectives]
-        indices = [tuple(query.values())]
-        columns = self.enabled_objectives
-        #print(values, columns, indices)
-        df_temp = pd.DataFrame([values], columns=columns, index=indices)
-        #print(df_temp)
-        df_results = pd.concat([df_results, df_temp])
-        #print(df_results)
-        return df_results
+        multi_index = pd.MultiIndex.from_tuples(index_tuples, names=list(query.keys()))
+        return pd.DataFrame([values], columns=self.enabled_objectives, index=multi_index)
 
 class Study():
     tab = None
@@ -263,12 +280,11 @@ class Study():
                 result = result.to_frame().T
         if result is None:
             result = await self.grpc_query.query_hardware(query.copy())
-            df: pd.DataFrame = self.software_query.tabular_dataset.query_tab
-            df = pd.concat([df, result])
-            df.index.names = self.get_parameter_names()
-            self.software_query.tabular_dataset.query_tab = df
+
+            self.software_query.tabular_dataset.add(result)
 
         return result.iloc[0].to_dict()
+
 
     def get_parameter_names(self):
         return [param.name for param in self.parameters]

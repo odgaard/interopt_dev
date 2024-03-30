@@ -110,6 +110,13 @@ class Constraint:
     def from_dict(cls, d: dict):
         return cls(**d)
 
+    def direct_eval(self, x: dict) -> bool:
+        return eval(self.constraint, {}, x)
+
+    # Implement callable
+    def __call__(self, x: dict) -> bool:
+        return self.direct_eval(x)
+
 
 def string_to_param_type(param_type_str: str) -> ParamType:
     return ParamType[param_type_str.upper()]
