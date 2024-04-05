@@ -134,7 +134,10 @@ class SoftwareQuery:
         return None
 
     def query_model(self, query_dict) -> pd.Series:
-        model_query_dict = self.convert_permutation_to_tuple(query_dict, 'permutation')
+        if "permutation" in query_dict.keys():
+            model_query_dict = self.convert_permutation_to_tuple(query_dict, 'permutation')
+        else:
+            model_query_dict = query_dict
 
         print("Using surrogate model")
         results = [self.models[objective].predict(pd.DataFrame([model_query_dict]))[0]
@@ -282,6 +285,9 @@ class Study():
             result = await self.grpc_query.query_hardware(query.copy())
 
             self.software_query.tabular_dataset.add(result)
+        print(result, type(result))
+        if len(result.index) == 0:
+            return { "compute_time": 0.0 }
 
         return result.iloc[0].to_dict()
 
