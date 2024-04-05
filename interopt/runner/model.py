@@ -59,7 +59,7 @@ def load_models(tab, benchmark_name, dataset, objectives, features):
 def train_model(input_tab, objective, benchmark_name, in_features):
     features = in_features.copy()
     tab = input_tab.copy()
-    #tab.reset_index(inplace=True)
+    tab.reset_index(inplace=True)
     if "permutation" in features:
         features.remove('permutation')
         tab['tuple_str'] = tab['permutation'].apply(ast.literal_eval)
