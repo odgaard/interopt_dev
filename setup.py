@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='interopt',
-    version='0.1.2',
+    version='0.1.3',
     author='Jacob Odgård Tørring',
     author_email='jacob.torring@ntnu.no',
     packages=find_packages(),
@@ -19,5 +19,6 @@ setup(
         'grpcio-tools',
         'protobuf',
         'scikit-learn',
+        'pydantic'
     ],
 )
