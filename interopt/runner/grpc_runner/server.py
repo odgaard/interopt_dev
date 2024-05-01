@@ -1,38 +1,37 @@
 import grpc
 import asyncio
+import logging
 
 import interopt.runner.grpc_runner.config_service_pb2 as cs
 import interopt.runner.grpc_runner.config_service_pb2_grpc as cs_grpc
 
 from interopt.study import Study
 
+# Configure logging
+#logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ConfigurationServiceServicer(cs_grpc.ConfigurationServiceServicer):
     def __init__ (self, study: Study):
         self.study = study
 
     async def RunConfigurationsClientServer(self, request, context):
-        #print(f"Received request: {request}")
-        #print(f"Received configs: {request.configurations.parameters}")
-        #print(f"Received request: {request}")
+        logging.info(f"Received request: {request}")
         query = await self.convert_request(request)
-        #print(f"Converted request: {query}")
         # Sort the query to ensure consistent ordering
         parameter_names = self.study.get_parameter_names()
         query = {name: query[name] for name in parameter_names}
-        #print(f"Sorted converted request: {query}")
+        logging.info(f"Converted request: {query}")
 
-        #print(f"Converted request: {query}")
         result = await self.study.query_async(query)
 
-        #print(f"Results 2: {result}")
+        logging.info(f"Results: {result}")
         result = await self.convert_response(result)
-        #print(f"Converted response: {result}")
+        logging.info(f"Converted response: {result}")
         return result
 
     async def Shutdown(self, request, context):
         if request.shutdown:
-            print("Shutdown requested")
+            logging.warning("Shutdown requested")
             # Add async shutdown logic here if necessary
             return cs.ShutdownResponse(success=True)
         return cs.ShutdownResponse(success=False)
@@ -59,17 +58,9 @@ class ConfigurationServiceServicer(cs_grpc.ConfigurationServiceServicer):
         return query
 
     async def convert_response(self, result):
-        #print(f"Metrics: {result}")
-        #print(f"Metrics: {cs.Metric(values=[result['compute_time']])}")
-        #metrics = [
-        #    cs.Metric(values=metric)
-        #    for metric in result
-        #]
         metrics = []
         for obj in self.study.enabled_objectives:
             metrics.append(cs.Metric(name=obj, values=[result[obj]]))
-        #metrics = [cs.Metric(values=[result['compute_time']])]
-        #print(f"Metrics: {metrics}")
         return cs.ConfigurationResponse(
             metrics=metrics,
             timestamps=cs.Timestamp(timestamp=int()),

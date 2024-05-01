@@ -2,6 +2,8 @@ import ast
 #import grpc
 import grpc.aio
 
+import logging
+
 # Import param enum type
 from interopt.parameter import ParamType, Param
 
@@ -51,9 +53,11 @@ async def run_config(query_dict: dict, parameters: list[Param], grpc_url: str):
             configurations=config,
             output_data_file="test"
         )
+        logging.info(f"Sending request: {request}")
         try:
             response = await stub.RunConfigurationsClientServer(request)
-            #print(f"Received response: {response}")
+            logging.info(f"Received response: {response}")
+            print(f"Received response: {response}")
             for metric in response.metrics:
                 result[metric.name] = metric.values
             #print(f"Received result: {result}")

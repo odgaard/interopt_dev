@@ -1,10 +1,7 @@
 from enum import Enum
-from typing import Any, Union, Type, Callable
+from typing import Any, Union, Type, Callable, Literal
 import re
 from pydantic import BaseModel, Field, validator
-
-class Configuration(BaseModel):
-    parameters: dict
 
 class ParamType(Enum):
     ORDINAL = 1
@@ -22,23 +19,19 @@ class Param(BaseModel):
     default: Any
     param_type_enum: ParamType = Field(None, exclude=True)
 
-    @validator('param_type_enum', pre=True, always=True)
-    def set_param_type_enum(cls, v):
-        return cls.__fields__['param_type_enum'].default
-
 class Categorical(Param):
-    param_type_enum = ParamType.CATEGORICAL
+    param_type_enum: Literal[ParamType.CATEGORICAL] = ParamType.CATEGORICAL
     categories: list
 
 class Permutation(Param):
-    param_type_enum = ParamType.PERMUTATION
+    param_type_enum: Literal[ParamType.PERMUTATION] = ParamType.PERMUTATION
     length: int
 
 class Boolean(Param):
-    param_type_enum = ParamType.BOOLEAN
+    param_type_enum: Literal[ParamType.BOOLEAN] = ParamType.BOOLEAN
 
 class Numeric(Param):
-    param_type_enum = ParamType.NUMERIC
+    param_type_enum: Literal[ParamType.NUMERIC] = ParamType.NUMERIC
     bounds: tuple
     transform: Callable[[Any], Any] = lambda x: x
 
@@ -49,20 +42,20 @@ class Numeric(Param):
         return v
 
 class Integer(Numeric):
-    param_type_enum = ParamType.INTEGER
+    param_type_enum: Literal[ParamType.INTEGER] = ParamType.INTEGER
 
 class IntExponential(Integer):
-    param_type_enum = ParamType.INTEGER_EXP
+    param_type_enum: Literal[ParamType.INTEGER_EXP] = ParamType.INTEGER_EXP
     base: int
 
 class Ordinal(Numeric):
-    param_type_enum = ParamType.ORDINAL
+    param_type_enum: Literal[ParamType.ORDINAL] = ParamType.ORDINAL
 
 class String(Param):
-    param_type_enum = ParamType.STRING
+    param_type_enum: Literal[ParamType.STRING] = ParamType.STRING
 
 class Real(Numeric):
-    param_type_enum = ParamType.REAL
+    param_type_enum: Literal[ParamType.REAL] = ParamType.REAL
 
 class Constraint(BaseModel):
     constraint: Union[Callable[[Any], Any], str]
@@ -78,10 +71,6 @@ class Constraint(BaseModel):
 
     @staticmethod
     def as_dict_lambda(input_str: str, variable_names: list[str]) -> Callable[[Any], Any]:
-        return Constraint._string_as_lambda(Constraint._as_dict_string(input_str, variable_names))
-
-    @staticmethod
-    def _string_as_lambda(input_str: str) -> Callable[[Any], Any]:
         return eval(f"lambda x: ({input_str})")
 
     def direct_eval(self, x: dict) -> bool:

@@ -13,6 +13,9 @@ from interopt.runner.grpc_runner import run_config
 from interopt.runner.model import load_models
 from interopt.definition import ProblemDefinition
 
+import logging
+
+logging.basicConfig(filename='app.log', level=logging.DEBUG, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
 class TabularDataset:
     def __init__(self, benchmark_name, dataset, parameter_names, objectives, enable_download):
         self.objectives = objectives
