@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='interopt',
-    version='0.1.1',
+    version='0.1.2',
     author='Jacob Odgård Tørring',
     author_email='jacob.torring@ntnu.no',
     packages=find_packages(),
