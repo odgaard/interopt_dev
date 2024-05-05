@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-import interopt.runner.grpc_runner.config_service_pb2 as config__service__pb2
+from . import config_service_pb2 as config__service__pb2
 
 
 class ConfigurationServiceStub(object):

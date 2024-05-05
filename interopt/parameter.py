@@ -33,7 +33,7 @@ class Boolean(Param):
 class Numeric(Param):
     param_type_enum: Literal[ParamType.NUMERIC] = ParamType.NUMERIC
     bounds: tuple
-    transform: Callable[[Any], Any] = lambda x: x
+    transform: str = None
 
     @validator('bounds')
     def set_bounds(cls, v):
