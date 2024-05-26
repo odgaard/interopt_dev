@@ -7,22 +7,19 @@ import interopt.runner.grpc_runner.config_service_pb2_grpc as cs_grpc
 
 from interopt.study import Study
 
-# Configure logging
-#logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
 class ConfigurationServiceServicer(cs_grpc.ConfigurationServiceServicer):
     def __init__ (self, study: Study):
         self.study = study
 
     async def RunConfigurationsClientServer(self, request, context):
         logging.info(f"Received request: {request}")
-        query = await self.convert_request(request)
+        query, feasibilities = await self.convert_request(request)
         # Sort the query to ensure consistent ordering
         parameter_names = self.study.get_parameter_names()
         query = {name: query[name] for name in parameter_names}
         logging.info(f"Converted request: {query}")
 
-        result = await self.study.query_async(query)
+        result = await self.study.query_async(query, feasibilities)
 
         logging.info(f"Results: {result}")
         result = await self.convert_response(result)
@@ -37,9 +34,9 @@ class ConfigurationServiceServicer(cs_grpc.ConfigurationServiceServicer):
         return cs.ShutdownResponse(success=False)
 
 
-    async def convert_request(self, request):
+    async def param_to_dict(self, parameters):
         query = {}
-        for key, param in request.configurations.parameters.items():
+        for key, param in parameters.items():
             # Each parameter could be of a different type, so check and extract accordingly
             if param.HasField('integer_param'):
                 query[key] = param.integer_param.value
@@ -56,6 +53,11 @@ class ConfigurationServiceServicer(cs_grpc.ConfigurationServiceServicer):
                 query[key] = str(tuple(vals))
             # Add additional elif blocks for other parameter types as needed
         return query
+
+    async def convert_request(self, request):
+        query = await self.param_to_dict(request.configurations.parameters)
+        fidelities = await self.param_to_dict(request.fidelities.parameters)
+        return query, fidelities
 
     async def convert_response(self, result):
         metrics = []

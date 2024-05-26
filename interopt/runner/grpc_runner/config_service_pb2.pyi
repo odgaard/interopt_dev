@@ -18,14 +18,29 @@ class ShutdownResponse(_message.Message):
     def __init__(self, success: bool = ...) -> None: ...
 
 class ConfigurationRequest(_message.Message):
-    __slots__ = ("configurations", "output_data_file")
+    __slots__ = ("configurations", "output_data_file", "fidelities")
     CONFIGURATIONS_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_DATA_FILE_FIELD_NUMBER: _ClassVar[int]
+    FIDELITIES_FIELD_NUMBER: _ClassVar[int]
     configurations: Configuration
     output_data_file: str
-    def __init__(self, configurations: _Optional[_Union[Configuration, _Mapping]] = ..., output_data_file: _Optional[str] = ...) -> None: ...
+    fidelities: Fidelities
+    def __init__(self, configurations: _Optional[_Union[Configuration, _Mapping]] = ..., output_data_file: _Optional[str] = ..., fidelities: _Optional[_Union[Fidelities, _Mapping]] = ...) -> None: ...
 
 class Configuration(_message.Message):
+    __slots__ = ("parameters",)
+    class ParametersEntry(_message.Message):
+        __slots__ = ("key", "value")
+        KEY_FIELD_NUMBER: _ClassVar[int]
+        VALUE_FIELD_NUMBER: _ClassVar[int]
+        key: str
+        value: Parameter
+        def __init__(self, key: _Optional[str] = ..., value: _Optional[_Union[Parameter, _Mapping]] = ...) -> None: ...
+    PARAMETERS_FIELD_NUMBER: _ClassVar[int]
+    parameters: _containers.MessageMap[str, Parameter]
+    def __init__(self, parameters: _Optional[_Mapping[str, Parameter]] = ...) -> None: ...
+
+class Fidelities(_message.Message):
     __slots__ = ("parameters",)
     class ParametersEntry(_message.Message):
         __slots__ = ("key", "value")

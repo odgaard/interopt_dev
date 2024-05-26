@@ -1,4 +1,4 @@
-from typing import Union
+from typing import Union, Optional
 from interopt.parameter import Param, Constraint, string_to_param_type, param_type_to_class
 
 class Metric:
@@ -25,7 +25,8 @@ class Objective:
 class SearchSpace():
     def __init__(self, params: Union[list[Param], list[dict]],
                  metrics: list[Metric], objectives: list[Objective],
-                 constraints: list[Constraint] = []):
+                 constraints: list[Constraint] = [],
+                 fidelity_params: Optional[list[Param]] = None):
         if isinstance(params[0], dict):
             self.params = [self.dict_to_param(p) for p in params]
         elif isinstance(params[0], Param):
@@ -34,6 +35,7 @@ class SearchSpace():
             raise ValueError("params must be a list of Param or dict")
 
         self.objectives = objectives
+        self.fidelity_params = fidelity_params
         self.constraints = constraints
         self.metrics = metrics
 
