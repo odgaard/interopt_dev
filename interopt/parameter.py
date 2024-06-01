@@ -59,7 +59,7 @@ class Real(Numeric):
 
 class Constraint(BaseModel):
     constraint: Union[Callable[[Any], Any], str]
-    #dependent_params: list[str]
+    dependent_params: list[str]
 
     @staticmethod
     def _as_dict_string(input_str: str, variable_names: list[str]) -> str:
