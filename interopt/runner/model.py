@@ -1,5 +1,6 @@
 import ast
 import os
+import tempfile
 
 import numpy as np
 
@@ -80,10 +81,11 @@ def train_model(input_tab, objective, benchmark_name, in_features):
 
     # Initialize CatBoostRegressor
     if catboost:
-        catboost_model = CatBoostRegressor(silent=True)
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            catboost_model = CatBoostRegressor(silent=True, train_dir=tmpdirname)
 
-        # Fit model
-        catboost_model.fit(X_train, y_train)
+            # Fit model
+            catboost_model.fit(X_train, y_train)
         y_pred = catboost_model.predict(X_test)
     else:
         # Autogluon expects the complete dataframe as input, e.g. both X and Y in one dataframe

@@ -48,7 +48,7 @@ class TabularDataset:
 
     def ensure_dataset_downloaded(self, benchmark_name, dataset):
         filename = f"{benchmark_name}_{dataset}.csv"
-        url = f"https://raw.githubusercontent.com/odgaard/bacobench_data/main/{filename}"  # URL of the file on Github
+        url = f"https://raw.githubusercontent.com/anonymoussisef/catbench_data/main/{filename}"  # URL of the file on Github
         #url = f'http://bacobench.s3.amazonaws.com/{filename}'  # URL of the file in S3
         if not os.path.exists('datasets'):
             os.mkdir('datasets')
