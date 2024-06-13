@@ -135,7 +135,7 @@ class SoftwareQuery:
             #print(f"Query result: {query_result}")
         if query_result is None and self.enable_model:
             # Use surrogate model, query is not available in the table
-            query_result: pd.Series = self.query_model(query_dict)
+            query_result: pd.Series = self.query_model(query_dict, fidelity_dict)
             #print(f"Query result: {query_result}")
 
         if query_result is not None:
@@ -144,11 +144,12 @@ class SoftwareQuery:
 
         return None
 
-    def query_model(self, query_dict) -> pd.Series:
+    def query_model(self, query_dict, fidelity_dict) -> pd.Series:
         if "permutation" in query_dict.keys():
             model_query_dict = self.convert_permutation_to_tuple(query_dict, 'permutation')
         else:
             model_query_dict = query_dict
+        model_query_dict.update(fidelity_dict)
 
         print("Using surrogate model")
         results = [self.models[objective].predict(pd.DataFrame([model_query_dict]))[0]
@@ -158,7 +159,7 @@ class SoftwareQuery:
         results = [np.exp(result) for result in results]
 
         return pd.DataFrame([results], columns=self.get_objectives(),
-                          index=[tuple(query_dict.values())]).iloc[0]
+                          index=[tuple(list(query_dict.values()) + list(fidelity_dict.values()))]).iloc[0]
 
     def convert_permutation_to_tuple(self, query_dict: dict, param: str) -> list[int]:
         new_dict = query_dict.copy()
