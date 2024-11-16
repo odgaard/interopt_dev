@@ -1,10 +1,11 @@
 import os
+import logging
 import ast
-import requests
-import asyncio
-
+import random
 from typing import Optional
 from enum import Enum, auto
+import requests
+import asyncio
 
 import pandas as pd
 import numpy as np
@@ -13,62 +14,50 @@ from interopt.runner.grpc_runner import run_config
 from interopt.runner.model import load_models
 from interopt.definition import ProblemDefinition
 
-import logging
 
-logging.basicConfig(filename='app.log', level=logging.DEBUG, filemode='w', format='%(asctime)s - %(levelname)s - %(message)s')
 class TabularDataset:
     def __init__(self, benchmark_name, dataset, parameter_names, objectives, enable_download):
         self.objectives = objectives
         self.tab = None
         self.parameter_names = parameter_names
         self.tab_path = f'datasets/{benchmark_name}_{dataset}.csv'
+        self.load_or_download_dataset(enable_download)
+
+    def load_or_download_dataset(self, enable_download: bool):
         if os.path.exists(self.tab_path):
             self.tab = pd.read_csv(self.tab_path).dropna()
-        elif enable_download:
-            success = self.ensure_dataset_downloaded(benchmark_name, dataset)
-            if success:
-                self.tab = pd.read_csv(self.tab_path).dropna()
-                print(self.tab)
+        elif enable_download and self.ensure_dataset_downloaded():
+            self.tab = pd.read_csv(self.tab_path).dropna()
+        self.prepare_dataset()
+
+    def prepare_dataset(self):
         if self.tab is None:
             multi_index = pd.MultiIndex.from_tuples([], names=self.parameter_names)
-            self.tab = pd.DataFrame(columns=parameter_names + objectives, index=multi_index)
+            self.tab = pd.DataFrame(columns=self.parameter_names + self.objectives, index=multi_index)
         else:
-            self.tab.set_index(parameter_names, inplace=True)
+            self.tab.set_index(self.parameter_names, inplace=True)
             self.tab.sort_index(inplace=True)
-        #self.load_and_prepare_dataset(parameter_names)
         self.query_tab = self.tab.copy()
 
-    #def load_and_prepare_dataset(self, parameter_names):
-        #self.tab['energy_consumptions'] = self.tab['energy_consumptions'].apply(
-        #    ast.literal_eval)
-        #self.tab['energy'] = self.tab['energy_consumptions'].apply(
-        #    lambda x: sum(x)/len(x) if len(x) > 0 else 0)
-        # Set the index for the query_tab, modify as needed for each benchmark
-
-
-    def ensure_dataset_downloaded(self, benchmark_name, dataset):
-        filename = f"{benchmark_name}_{dataset}.csv"
-        url = f"https://raw.githubusercontent.com/anonymoussisef/catbench_data/main/{filename}"  # URL of the file on Github
-        #url = f'http://bacobench.s3.amazonaws.com/{filename}'  # URL of the file in S3
+    def ensure_dataset_downloaded(self) -> bool:
         if not os.path.exists('datasets'):
-            os.mkdir('datasets')
-        file_path = f'datasets/{filename}'
-        success = True
-        if not os.path.exists(file_path):
-            success = TabularDataset.download_file(url, file_path)
-        return success
-
+            os.makedirs('datasets')
+        if not os.path.exists(self.tab_path):
+            url = f"https://raw.githubusercontent.com/odgaard/bacobench_data/main/{os.path.basename(self.tab_path)}"  # URL of the file on Github
+            return self.download_file(url, self.tab_path)
+        return False
+    
     @staticmethod
-    def download_file(url, local_file_path):
+    def download_file(url: str, local_file_path: str) -> bool:
         try:
             response = requests.get(url, timeout=10)
-            response.raise_for_status()  # Will raise an exception for 4XX/5XX errors
+            response.raise_for_status()
             with open(local_file_path, 'wb') as f:
                 f.write(response.content)
-            print(f"Downloaded {local_file_path}")
+            logging.info(f"Downloaded {local_file_path}")
             return True
-        except requests.exceptions.HTTPError as e:
-            print(f"Failed to download {url}: {e}")
+        except requests.exceptions.RequestException as e:
+            logging.warning(f"Failed to download {url}: {e}")
             return False
 
     def query(self, query_dict, fidelity_dict) -> Optional[pd.Series]:
@@ -120,13 +109,11 @@ class SoftwareQuery:
         self.query_tab = self.tabular_dataset.query_tab
         self.enable_tabular = enable_tabular
         self.enable_model = enable_model
-        #print(f"Enable tabular: {enable_tabular}")
-        #print(f"Enable model: {enable_model}")S
 
     def get_objectives(self):
         return self.tabular_dataset.objectives
 
-    async def query_software(self, query_dict: dict, fidelity_dict: dict) -> Optional[pd.DataFrame]:
+    async def query_software(self, query_dict: dict, fidelity_dict: dict, study_id: str) -> Optional[pd.DataFrame]:
         # Use the tabular data, query is available in the table
         query_result = pd.DataFrame()
         #print(f"Query: {query_dict}, {self.enable_tabular}, {self.enable_model}")
@@ -207,21 +194,21 @@ class GRPCQuery:
         self.enabled_objectives = enabled_objectives
         self.queue_handler = QueueHandler(grpc_urls)
 
-    async def send_queries_to_servers(self, query: dict, fidelities: dict) -> dict:
-        return await self.send_query(query, fidelities)
 
-    async def send_query(self, query: dict, fidelities: dict) -> dict:
+    async def send_queries_to_servers(self, query: dict, fidelities: dict, study_name: str) -> dict:
+        return await self.send_query(query, fidelities, study_name)
+
+    async def send_query(self, query: dict, fidelities: dict, study_name: str) -> dict:
         url = await self.queue_handler.get_available_server_url()
         try:
-            #print(f"Sending query to {url}")
             result = await run_config(query, self.parameters, fidelities, self.fidelity_params, url)
             return result
         finally:
             await self.queue_handler.mark_server_as_available(url)
 
-    async def query_hardware(self, query: dict, fidelities: dict) -> pd.DataFrame:
+    async def query_hardware(self, query: dict, fidelities: dict, study_name: str) -> pd.DataFrame:
         # Implement or override as needed
-        result = await self.send_queries_to_servers(query, fidelities)
+        result = await self.send_queries_to_servers(query, fidelities, study_name)
         result = await self.process_grpc_results(result, query, fidelities)
         return result
 
@@ -249,11 +236,12 @@ class Study():
 
     def __init__(self, benchmark_name: str, definition: ProblemDefinition,
                  enable_tabular: bool, dataset, enabled_objectives: list[str],
-                 server_addresses: list[str] = ["localhost"], port=50051, url="",
-                 enable_model: bool = True, enable_download: bool = True):
+                 server_addresses: list[str] = None, port=50051, url="", queue_handler=None,
+                 enable_model: bool = True, enable_download: bool = True, study_name = None):
         self.benchmark_name = benchmark_name
+        self.server_addresses = server_addresses if server_addresses else ["localhost"]
         #self.grpc_urls = [f"{server_address}:{port}" if url == "" else url]
-        self.grpc_urls = [f"{server_address}:{port}" for server_address in server_addresses]
+        self.grpc_urls = [f"{server_address}:{port}" for server_address in self.server_addresses]
         self.enabled_objectives = enabled_objectives
         self.enable_tabular = enable_tabular
         self.enable_model = enable_model
@@ -262,6 +250,7 @@ class Study():
         self.parameters = definition.search_space.params
         self.fidelity_params = definition.search_space.fidelity_params
         self.port = port
+        self.study_name = study_name if study_name else f"{benchmark_name}_{dataset}_{random.randint(0, 100000)}"
 
         if self.enable_tabular or self.enable_model:
             self.software_query = SoftwareQuery(
@@ -289,19 +278,20 @@ class Study():
             ret[k] = res[k]
         return ret
 
-    async def query_async(self, query: dict, fidelities: dict) -> list[dict]:
-        return await self.query_choice(query, fidelities)
+    async def query_async(self, query: dict, fidelities: dict, study_name=None) -> list[dict]:
+        if study_name is None:
+            study_name = self.study_name
+        return await self.query_choice(query, fidelities, study_name)
 
     async def query_choice(self, query: dict, fidelities: dict) -> dict:
         result = None
         if self.enable_tabular:
             result = await self.software_query.query_software(
-                query.copy(), fidelity_dict=fidelities.copy())
+                query.copy(), fidelity_dict=fidelities.copy(), study_name)
             if isinstance(result, pd.Series):
                 result = result.to_frame().T
         if result is None:
-            result = await self.grpc_query.query_hardware(query.copy(), fidelities.copy())
-
+            result = await self.grpc_query.query_hardware(query.copy(), fidelities.copy(), study_name)
             self.software_query.tabular_dataset.add(result)
         print(result, type(result))
         if len(result.index) == 0:

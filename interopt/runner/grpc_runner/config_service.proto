@@ -15,7 +15,8 @@ message ShutdownResponse {
 message ConfigurationRequest {
   Configuration configurations = 1;
   string output_data_file = 2;
-  Fidelities fidelities = 3;
+  string study_name = 3;
+  Fidelities fidelities = 4;
 }
 
 message Configuration {

@@ -18,6 +18,7 @@ class ShutdownResponse(_message.Message):
     def __init__(self, success: bool = ...) -> None: ...
 
 class ConfigurationRequest(_message.Message):
+
     __slots__ = ("configurations", "output_data_file", "fidelities")
     CONFIGURATIONS_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_DATA_FILE_FIELD_NUMBER: _ClassVar[int]
