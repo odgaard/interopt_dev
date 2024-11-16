@@ -60,10 +60,16 @@ class TabularDataset:
             logging.warning(f"Failed to download {url}: {e}")
             return False
 
-    def query(self, query_dict) -> Optional[pd.Series]:
-        query_tuple = tuple(query_dict[col] for col in self.query_tab.index.names)
-        return self.query_tab.loc[query_tuple][self.objectives] if query_tuple in self.query_tab.index else None
-
+    def query(self, query_dict, fidelity_dict) -> Optional[pd.Series]:
+        d = query_dict.copy()
+        d.update(fidelity_dict)
+        query_tuple = tuple(d[col] for col in self.query_tab.index.names)
+        if query_tuple in self.query_tab.index:
+            print("Using tabular data")
+            query_result: pd.Series = self.query_tab.loc[query_tuple][self.objectives]
+            return query_result
+        #print("Query not found in tabular data")
+        return None
 
     def write(self, result):
         # Check if the CSV file exists
@@ -80,37 +86,43 @@ class TabularDataset:
 
     def add(self, result):
         self.write(result)
-        self.query_tab = pd.concat([self.query_tab, result])
+        logging.info(f"Adding to tabular data: {result}")
+        #logging.info(f"Tabular data: {self.query_tab}")
+        logging.info(f"Result: {result}")
 
+        self.query_tab = pd.concat([self.query_tab, result])
 
 
 
 class SoftwareQuery:
     def __init__(self, benchmark_name, dataset, parameter_names, enabled_objectives,
-                 enable_tabular, enable_model, enable_download):
+                 enable_tabular, enable_model, enable_download, fidelity_names=None):
+        if fidelity_names is None:
+            fidelity_names = []
         self.tabular_dataset = TabularDataset(
-            benchmark_name, dataset, parameter_names, enabled_objectives, enable_download)
-        self.query_tab = self.tabular_dataset.query_tab
-        self.enable_tabular = enable_tabular
-        self.enable_model = enable_model
+            benchmark_name, dataset, parameter_names + fidelity_names,
+            enabled_objectives, enable_download)
         if enable_model:
             self.models = load_models(
                 self.tabular_dataset.query_tab, benchmark_name, dataset,
-                enabled_objectives, parameter_names)
+                enabled_objectives, parameter_names + fidelity_names)
+        self.query_tab = self.tabular_dataset.query_tab
+        self.enable_tabular = enable_tabular
+        self.enable_model = enable_model
 
     def get_objectives(self):
         return self.tabular_dataset.objectives
 
-    async def query_software(self, query_dict: dict, study_id: str) -> Optional[pd.DataFrame]:
+    async def query_software(self, query_dict: dict, fidelity_dict: dict, study_id: str) -> Optional[pd.DataFrame]:
         # Use the tabular data, query is available in the table
         query_result = pd.DataFrame()
         #print(f"Query: {query_dict}, {self.enable_tabular}, {self.enable_model}")
         if self.enable_tabular:
-            query_result = self.tabular_dataset.query(query_dict)
+            query_result = self.tabular_dataset.query(query_dict, fidelity_dict)
             #print(f"Query result: {query_result}")
         if query_result is None and self.enable_model:
             # Use surrogate model, query is not available in the table
-            query_result: pd.Series = self.query_model(query_dict)
+            query_result: pd.Series = self.query_model(query_dict, fidelity_dict)
             #print(f"Query result: {query_result}")
 
         if query_result is not None:
@@ -119,11 +131,12 @@ class SoftwareQuery:
 
         return None
 
-    def query_model(self, query_dict) -> pd.Series:
+    def query_model(self, query_dict, fidelity_dict) -> pd.Series:
         if "permutation" in query_dict.keys():
             model_query_dict = self.convert_permutation_to_tuple(query_dict, 'permutation')
         else:
             model_query_dict = query_dict
+        model_query_dict.update(fidelity_dict)
 
         print("Using surrogate model")
         results = [self.models[objective].predict(pd.DataFrame([model_query_dict]))[0]
@@ -133,7 +146,7 @@ class SoftwareQuery:
         results = [np.exp(result) for result in results]
 
         return pd.DataFrame([results], columns=self.get_objectives(),
-                          index=[tuple(query_dict.values())]).iloc[0]
+                          index=[tuple(list(query_dict.values()) + list(fidelity_dict.values()))]).iloc[0]
 
     def convert_permutation_to_tuple(self, query_dict: dict, param: str) -> list[int]:
         new_dict = query_dict.copy()
@@ -174,45 +187,46 @@ class QueueHandler:
             self.available_server_event.set()  # Signal that at least one server is available
 
 class GRPCQuery:
-    def __init__(self, grpc_urls, parameters,
-                 enabled_objectives, definition: ProblemDefinition):
-        self.parameters = parameters
-        self.enabled_objectives = enabled_objectives
+    def __init__(self, grpc_urls, enabled_objectives, definition: ProblemDefinition):
         self.definition = definition
+        self.parameters = definition.search_space.params
+        self.fidelity_params = definition.search_space.fidelity_params
+        self.enabled_objectives = enabled_objectives
         self.queue_handler = QueueHandler(grpc_urls)
 
-    async def send_queries_to_servers(self, query: dict, study_name: str) -> dict:
-        return await self.send_query(query, study_name)
 
-    async def send_query(self, query: dict, study_name: str) -> dict:
+    async def send_queries_to_servers(self, query: dict, fidelities: dict, study_name: str) -> dict:
+        return await self.send_query(query, fidelities, study_name)
+
+    async def send_query(self, query: dict, fidelities: dict, study_name: str) -> dict:
         url = await self.queue_handler.get_available_server_url()
         try:
-            #print(f"Sending query to {url}")
-            result = await run_config(
-                query,parameters=self.parameters, grpc_url=url, study_name=study_name)
+            result = await run_config(query, self.parameters, fidelities, self.fidelity_params, url)
             return result
         finally:
             await self.queue_handler.mark_server_as_available(url)
 
-    async def query_hardware(self, query: dict, study_name: str) -> pd.DataFrame:
+    async def query_hardware(self, query: dict, fidelities: dict, study_name: str) -> pd.DataFrame:
         # Implement or override as needed
-        result = await self.send_queries_to_servers(query, study_name)
-        result = await self.process_grpc_results(result, query)
+        result = await self.send_queries_to_servers(query, fidelities, study_name)
+        result = await self.process_grpc_results(result, query, fidelities)
         return result
 
-    async def process_grpc_results(self, result: dict, query: dict) -> pd.DataFrame:
+    async def process_grpc_results(self, result: dict, query: dict, fidelities: dict) -> pd.DataFrame:
         # Create a MultiIndex with names
-        index_tuples = [tuple(query.values())]  # This will be a list of tuples
+        d = query.copy()
+        d.update(fidelities)
+        index_tuples = [tuple(d.values())]  # This will be a list of tuples
 
         if len(result) == 0:
             # Creating a MultiIndex without rows initially
-            multi_index = pd.MultiIndex.from_tuples([], names=list(query.keys()))
+            multi_index = pd.MultiIndex.from_tuples([], names=list(d.keys()))
 
             # Creating an empty DataFrame with a MultiIndex and specific columns
             return pd.DataFrame(columns=self.enabled_objectives, index=multi_index)
 
         values = [result[e][0] for e in self.enabled_objectives]
-        multi_index = pd.MultiIndex.from_tuples(index_tuples, names=list(query.keys()))
+        multi_index = pd.MultiIndex.from_tuples(index_tuples, names=list(d.keys()))
         return pd.DataFrame([values], columns=self.enabled_objectives, index=multi_index)
 
 class Study():
@@ -234,19 +248,20 @@ class Study():
         self.dataset = dataset
         self.definition = definition
         self.parameters = definition.search_space.params
+        self.fidelity_params = definition.search_space.fidelity_params
         self.port = port
         self.study_name = study_name if study_name else f"{benchmark_name}_{dataset}_{random.randint(0, 100000)}"
 
         if self.enable_tabular or self.enable_model:
             self.software_query = SoftwareQuery(
                 benchmark_name, dataset, self.get_parameter_names(),
+                fidelity_names=[param.name for param in self.fidelity_params],
                 enabled_objectives=self.enabled_objectives,
                 enable_tabular=self.enable_tabular, enable_model=self.enable_model,
                 enable_download=enable_download)
         else:
             self.software_query = None
-        self.grpc_query = GRPCQuery(self.grpc_urls, self.parameters,
-                                    self.enabled_objectives, self.definition)
+        self.grpc_query = GRPCQuery(self.grpc_urls, self.enabled_objectives, self.definition)
 
     def set_tabular(self, enable_tabular: bool):
         self.enable_tabular = enable_tabular
@@ -254,27 +269,29 @@ class Study():
     def get_enabled_objectives(self):
         return self.enabled_objectives
 
-    def query(self, query: dict) -> dict:
-        res = asyncio.run(self.query_async(query))
+    def query(self, query: dict, fidelities: Optional[dict] = None) -> dict:
+        if fidelities is None:
+            fidelities = {}
+        res = asyncio.run(self.query_async(query, fidelities))
         ret = {}
         for k in self.enabled_objectives:
             ret[k] = res[k]
         return ret
 
-    async def query_async(self, query: dict, study_name=None) -> list[dict]:
+    async def query_async(self, query: dict, fidelities: dict, study_name=None) -> list[dict]:
         if study_name is None:
             study_name = self.study_name
-        return await self.query_choice(query, study_name)
+        return await self.query_choice(query, fidelities, study_name)
 
-    async def query_choice(self, query: dict, study_name) -> dict:
+    async def query_choice(self, query: dict, fidelities: dict) -> dict:
         result = None
         if self.enable_tabular:
-            result = await self.software_query.query_software(query.copy(), study_name)
+            result = await self.software_query.query_software(
+                query.copy(), fidelity_dict=fidelities.copy(), study_name)
             if isinstance(result, pd.Series):
                 result = result.to_frame().T
         if result is None:
-            result = await self.grpc_query.query_hardware(query.copy(), study_name)
-
+            result = await self.grpc_query.query_hardware(query.copy(), fidelities.copy(), study_name)
             self.software_query.tabular_dataset.add(result)
         print(result, type(result))
         if len(result.index) == 0:

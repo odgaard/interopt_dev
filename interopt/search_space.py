@@ -19,3 +19,6 @@ class SearchSpace(BaseModel):
     metrics: list[Metric]
     objectives: list[Objective]
     constraints: list[Constraint]
+    fidelities: list[Union[Categorical, Permutation, Boolean,
+                       Numeric, Integer, IntExponential,
+                       Ordinal, String, Real]]

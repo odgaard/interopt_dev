@@ -16,9 +16,14 @@ message ConfigurationRequest {
   Configuration configurations = 1;
   string output_data_file = 2;
   string study_name = 3;
+  Fidelities fidelities = 4;
 }
 
 message Configuration {
+  map<string, Parameter> parameters = 1;
+}
+
+message Fidelities {
   map<string, Parameter> parameters = 1;
 }
 

@@ -20,7 +20,7 @@ class InteroptServiceServicer(ios_grpc.InteroptServiceServicer):
 
     async def RunConfiguration(self, request, context):
         logging.info(f"Received request: {request}")
-        query = await self.convert_request(request)
+        query, feasibilities = await self.convert_request(request)
         # Sort the query to ensure consistent ordering
         study_name = request.study_name
         study = self.studies[study_name]
@@ -30,7 +30,7 @@ class InteroptServiceServicer(ios_grpc.InteroptServiceServicer):
         query = {name: query[name] for name in study.get_parameter_names()}
         logging.info(f"Converted request: {query}")
 
-        result = await study.query_async(query, study_name=study_name)
+        result = await study.query_async(query, feasibilities, study_name=study_name)
 
         logging.info(f"Results: {result}")
         result = await self.convert_response(result, study)
@@ -83,9 +83,9 @@ class InteroptServiceServicer(ios_grpc.InteroptServiceServicer):
         return cs.ShutdownResponse(success=False)
 
 
-    async def convert_request(self, request):
+    async def param_to_dict(self, parameters):
         query = {}
-        for key, param in request.configurations.parameters.items():
+        for key, param in parameters.items():
             # Each parameter could be of a different type, so check and extract accordingly
             if param.HasField('integer_param'):
                 query[key] = param.integer_param.value
@@ -103,7 +103,12 @@ class InteroptServiceServicer(ios_grpc.InteroptServiceServicer):
             # Add additional elif blocks for other parameter types as needed
         return query
 
-    async def convert_response(self, result, study: Study):
+    async def convert_request(self, request):
+        query = await self.param_to_dict(request.configurations.parameters)
+        fidelities = await self.param_to_dict(request.fidelities.parameters)
+        return query, fidelities
+
+    async def convert_response(self, result):
         metrics = []
         for obj in study.enabled_objectives:
             metrics.append(ios.Metric(name=obj, values=[result[obj]]))

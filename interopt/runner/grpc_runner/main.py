@@ -65,6 +65,7 @@ async def setup_study(study_name: str, problem_name: str,
 
 
 async def run_config(query_dict: dict, parameters: list[Param], grpc_url: str, study_name: str):
+
     parameter_names = [param.name for param in parameters]
     parameter_types = [param.param_type_enum for param in parameters]
     query_dict_list = []
@@ -72,19 +73,39 @@ async def run_config(query_dict: dict, parameters: list[Param], grpc_url: str, s
         if name not in parameter_names:
             raise ValueError(f"Unknown parameter: {name}")
         query_dict_list.append([name, value, parameter_types[parameter_names.index(name)]])
+
     query_dict_grpc = {
         name: value_to_param(value, param_type)
         for name, value, param_type in query_dict_list
     }
+
     config = cs.Configuration(parameters=query_dict_grpc)
+    if fidelities:
+        fidelity_names = [param.name for param in fidelities]
+        fidelity_types = [param.param_type_enum for param in fidelities]
+        fidelity_dict_list = []
+        for name, value in fidelity_dict.items():
+            if name not in fidelity_names:
+                raise ValueError(f"Unknown parameter: {name}")
+            fidelity_dict_list.append([name, value, fidelity_types[fidelity_names.index(name)]])
+
+        fidelity_dict_grpc = {
+            name: value_to_param(value, param_type)
+            for name, value, param_type in fidelity_dict_list
+        }
+    else:
+        fidelity_dict_grpc = {}
     result = {}
+
+    fidelities_grpc = cs.Fidelities(parameters=fidelity_dict_grpc)
 
     async with grpc.aio.insecure_channel(grpc_url) as channel:
         stub = cs_grpc.ConfigurationServiceStub(channel)
         request = cs.ConfigurationRequest(
             configurations=config,
             output_data_file="",
-            study_name=study_name
+            study_name=study_name,
+            fidelities=fidelities_grpc
         )
         logging.info(f"Sending request: {request}")
         try:
