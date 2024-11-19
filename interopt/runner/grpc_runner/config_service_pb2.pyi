@@ -18,15 +18,16 @@ class ShutdownResponse(_message.Message):
     def __init__(self, success: bool = ...) -> None: ...
 
 class ConfigurationRequest(_message.Message):
-
-    __slots__ = ("configurations", "output_data_file", "fidelities")
+    __slots__ = ("configurations", "output_data_file", "study_name", "fidelities")
     CONFIGURATIONS_FIELD_NUMBER: _ClassVar[int]
     OUTPUT_DATA_FILE_FIELD_NUMBER: _ClassVar[int]
+    STUDY_NAME_FIELD_NUMBER: _ClassVar[int]
     FIDELITIES_FIELD_NUMBER: _ClassVar[int]
     configurations: Configuration
     output_data_file: str
+    study_name: str
     fidelities: Fidelities
-    def __init__(self, configurations: _Optional[_Union[Configuration, _Mapping]] = ..., output_data_file: _Optional[str] = ..., fidelities: _Optional[_Union[Fidelities, _Mapping]] = ...) -> None: ...
+    def __init__(self, configurations: _Optional[_Union[Configuration, _Mapping]] = ..., output_data_file: _Optional[str] = ..., study_name: _Optional[str] = ..., fidelities: _Optional[_Union[Fidelities, _Mapping]] = ...) -> None: ...
 
 class Configuration(_message.Message):
     __slots__ = ("parameters",)

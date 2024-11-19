@@ -1,93 +1,86 @@
-from enum import Enum
-from typing import Any, Union, Type, Callable, Literal
-import re
-from pydantic import BaseModel, Field, validator
+# interopt/parameter.py
+from dataclasses import dataclass, field
+from typing import Any, Union, List, Optional, Tuple, Callable
 
-class ParamType(Enum):
-    ORDINAL = 1
-    CATEGORICAL = 2
-    BOOLEAN = 3
-    INTEGER = 4
-    REAL = 5
-    PERMUTATION = 6
-    STRING = 7
-    INTEGER_EXP = 8
-    NUMERIC = 9
-
-class Param(BaseModel):
+@dataclass
+class Param:
+    """Base parameter class"""
     name: str
     default: Any
-    param_type_enum: ParamType = Field(None, exclude=True)
 
+@dataclass
 class Categorical(Param):
-    param_type_enum: Literal[ParamType.CATEGORICAL] = ParamType.CATEGORICAL
-    categories: list
+    """Categorical parameter with discrete categories"""
+    categories: List[Any]
 
+@dataclass
 class Permutation(Param):
-    param_type_enum: Literal[ParamType.PERMUTATION] = ParamType.PERMUTATION
+    """Permutation parameter with fixed length"""
     length: int
 
+@dataclass
 class Boolean(Param):
-    param_type_enum: Literal[ParamType.BOOLEAN] = ParamType.BOOLEAN
+    """Boolean parameter"""
+    pass
 
+@dataclass
 class Numeric(Param):
-    param_type_enum: Literal[ParamType.NUMERIC] = ParamType.NUMERIC
-    bounds: tuple
-    transform: str = None
+    """Base class for numeric parameters"""
+    bounds: Tuple[Union[int, float], Union[int, float]]
+    transform: Optional[str] = None
 
-    @validator('bounds')
-    def set_bounds(cls, v):
-        if len(v) < 2:
-            raise ValueError('Bounds must have at least 2 elements')
-        return v
+    def __post_init__(self):
+        if len(self.bounds) != 2:
+            raise ValueError('Bounds must have exactly 2 elements')
 
-class Integer(Numeric):
-    param_type_enum: Literal[ParamType.INTEGER] = ParamType.INTEGER
-
-class IntExponential(Integer):
-    param_type_enum: Literal[ParamType.INTEGER_EXP] = ParamType.INTEGER_EXP
-    base: int
-
-class Ordinal(Numeric):
-    param_type_enum: Literal[ParamType.ORDINAL] = ParamType.ORDINAL
-
-class String(Param):
-    param_type_enum: Literal[ParamType.STRING] = ParamType.STRING
-
+@dataclass
 class Real(Numeric):
-    param_type_enum: Literal[ParamType.REAL] = ParamType.REAL
+    """Real-valued parameter"""
+    pass
 
-class Constraint(BaseModel):
-    constraint: Union[Callable[[Any], Any], str]
-    dependent_params: list[str]
+@dataclass
+class Integer(Numeric):
+    """Integer-valued parameter"""
+    pass
 
-    @staticmethod
-    def _as_dict_string(input_str: str, variable_names: list[str]) -> str:
-        for var_name in sorted(variable_names, key=len, reverse=True):
-            pattern = r'\b' + re.escape(var_name) + r'\b'
-            replacement = f"x['{var_name}']"
-            input_str = re.sub(pattern, replacement, input_str)
-        return input_str
+@dataclass
+class IntExponential(Param):
+    """Integer parameter with exponential scaling"""
+    name: str
+    default: Any
+    bounds: Tuple[int, int]
+    base: int
+    transform: Optional[str] = None
 
-    @staticmethod
-    def as_dict_lambda(input_str: str, variable_names: list[str]) -> Callable[[Any], Any]:
-        return eval(f"lambda x: ({input_str})")
+@dataclass
+class Ordinal(Numeric):
+    """Ordinal parameter with discrete ordered values"""
+    pass
 
-    def direct_eval(self, x: dict) -> bool:
-        return eval(self.constraint, {}, x)
+@dataclass
+class String(Param):
+    """String parameter"""
+    pass
 
-    def __call__(self, x: dict) -> bool:
-        return self.direct_eval(x)
+@dataclass
+class Constraint:
+    """Constraint on parameter values"""
+    constraint: Union[Callable[[Any], bool], str]
+    dependent_params: List[str]
 
+# Helper functions
+def is_numeric(param: Param) -> bool:
+    """Check if parameter is numeric type"""
+    return isinstance(param, Numeric)
 
-def string_to_param_type(param_type_str: str) -> ParamType:
-    return ParamType[param_type_str.upper()]
+def is_categorical(param: Param) -> bool:
+    """Check if parameter is categorical type"""
+    return isinstance(param, Categorical)
 
-def param_type_to_class(param_type: ParamType) -> Type[Param]:
-    for cls in Param.__subclasses__():
-        if cls.__fields__['param_type_enum'].default == param_type:
-            return cls
-    raise ValueError(f"No class found for ParamType {param_type}")
+def is_permutation(param: Param) -> bool:
+    """Check if parameter is permutation type"""
+    return isinstance(param, Permutation)
 
-def class_to_param_type(param_class: Type[Param]) -> ParamType:
-    return param_class.__fields__['param_type_enum'].default
+def get_param_type(param: Param) -> str:
+    """Get string representation of parameter type"""
+    return param.__class__.__name__.upper()

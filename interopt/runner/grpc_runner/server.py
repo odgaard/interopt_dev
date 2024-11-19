@@ -7,11 +7,103 @@ import uvicorn
 import logging.handlers
 
 import interopt.runner.grpc_runner.config_service_pb2 as cs
+import interopt.runner.grpc_runner.config_service_pb2_grpc as cs_grpc
 import interopt.runner.grpc_runner.interopt_service_pb2 as ios
 import interopt.runner.grpc_runner.interopt_service_pb2_grpc as ios_grpc
 
 from interopt.study import Study, QueueHandler
 from interopt.definition import ProblemDefinition
+
+
+# Defining EvaluationStatus enum
+class EvaluationStatus:
+    PENDING = 0
+    RUNNING = 1
+    COMPLETED = 2
+    FAILED = 3
+class Query:
+    def __init__(self, parameters: dict, fidelities: dict):
+        self.parameters = parameters
+        self.fidelities = fidelities
+        self.status = EvaluationStatus.PENDING
+        self.evaluation_host = None
+
+    def get_evaluation_host(self):
+        return self.evaluation_host
+
+    def set_evaluation_host(self, evaluation_host):
+        self.evaluation_host = evaluation_host
+
+    def set_status(self, status: EvaluationStatus):
+        self.status = status
+
+class ConfigurationServiceServicer(cs_grpc.ConfigurationServiceServicer):
+    def __init__(self, studies: dict[str, Study]):
+        self.studies = studies
+
+    async def RunConfigurationsClientServer(self, request, context):
+        """Handle incoming configuration requests"""
+        logging.info(f"Received configuration request: {request}")
+
+        study_name = request.study_name or "test"  # Use "test" as default if not specified
+        if study_name not in self.studies:
+            context.set_code(grpc.StatusCode.NOT_FOUND)
+            context.set_details(f'Study {study_name} not found')
+            return cs.ConfigurationResponse()
+
+        study = self.studies[study_name]
+
+        # Convert configuration parameters to dictionary
+        def convert_param(param):
+            if param.HasField('integer_param'):
+                return param.integer_param.value
+            if param.HasField('real_param'):
+                return param.real_param.value
+            if param.HasField('categorical_param'):
+                return param.categorical_param.value
+            if param.HasField('ordinal_param'):
+                return param.ordinal_param.value
+            if param.HasField('string_param'):
+                return param.string_param.value
+            if param.HasField('permutation_param'):
+                return str(tuple(param.permutation_param.values))
+            return None
+
+        query_dict = {name: convert_param(param) for name, param in request.configurations.parameters.items()}
+        fidelities_dict = {name: convert_param(param) for name, param in request.fidelities.parameters.items()}
+        query = Query(query_dict, fidelities_dict)
+        study.trajectory.append(query)
+        try:
+            # Query the study
+            logging.info(f"Querying study with parameters: {query.parameters}")
+            result = await study.query_async(query.parameters, query.fidelities)
+            logging.info(f"Query result: {result}")
+
+            # Convert results to response format
+            metrics = []
+            for name, values in result.items():
+                if isinstance(values, (int, float)):
+                    values = [values]
+                metrics.append(cs.Metric(name=name, values=values))
+
+            response = cs.ConfigurationResponse(
+                metrics=metrics,
+                timestamps=cs.Timestamp(timestamp=0),
+                feasible=cs.Feasible(value=True)
+            )
+            logging.info(f"Sending response: {response}")
+            return response
+
+        except Exception as e:
+            logging.error(f"Error processing request: {e}", exc_info=True)
+            context.set_code(grpc.StatusCode.INTERNAL)
+            context.set_details(str(e))
+            return cs.ConfigurationResponse()
+
+    async def Shutdown(self, request, context):
+        if request.shutdown:
+            return cs.ShutdownResponse(success=True)
+        return cs.ShutdownResponse(success=False)
 
 class InteroptServiceServicer(ios_grpc.InteroptServiceServicer):
     def __init__ (self, studies: dict[Study], problem_registry: dict[str, ProblemDefinition]):
@@ -108,7 +200,7 @@ class InteroptServiceServicer(ios_grpc.InteroptServiceServicer):
         fidelities = await self.param_to_dict(request.fidelities.parameters)
         return query, fidelities
 
-    async def convert_response(self, result):
+    async def convert_response(self, result, study):
         metrics = []
         for obj in study.enabled_objectives:
             metrics.append(ios.Metric(name=obj, values=[result[obj]]))
@@ -118,28 +210,6 @@ class InteroptServiceServicer(ios_grpc.InteroptServiceServicer):
             feasible=cs.Feasible(value=True)
         )
 
-"""
-class Server():
-    def __init__(self, studies: list[Study], problem_registry: dict[str, ProblemDefinition], port: int = 50050):
-        self.studies = studies
-        self.problem_registry = problem_registry
-        self.port = port
-
-    async def serve(self) -> None:
-        server = grpc.aio.server()
-        ios_grpc.add_InteroptServiceServicer_to_server(
-            InteroptServiceServicer(self.studies, self.problem_registry), server)
-        listen_addr = f'[::]:{self.port}'
-        server.add_insecure_port(listen_addr)
-        print(f'Serving on {listen_addr}')
-        await server.start()
-        await server.wait_for_termination()
-
-    def start(self):
-        asyncio.run(self.serve())
-"""
-
-
 class Server():
     def __init__(self, studies: dict[str, Study],
                  problem_registry: dict[str, ProblemDefinition],
@@ -148,7 +218,8 @@ class Server():
         self.problem_registry = problem_registry
         self.grpc_port = grpc_port
         self.api_port = api_port
-        self.service = InteroptServiceServicer(studies, problem_registry)
+        self.interopt_service = InteroptServiceServicer(studies, problem_registry)
+        self.config_service = ConfigurationServiceServicer(studies)
         self.app = FastAPI()
         self.setup_routes()
 
@@ -164,8 +235,9 @@ class Server():
                     "enable_model": study.enable_model,
                     "server_addresses": study.server_addresses,
                     "enabled_objectives": study.enabled_objectives,
+                    "problem_definition": study.definition
                 }
-                for name, study in self.service.studies.items()
+                for name, study in self.interopt_service.studies.items()
             }
 
         @self.app.get("/problems/")
@@ -183,7 +255,10 @@ class Server():
 
     async def serve_grpc(self):
         server = grpc.aio.server()
-        ios_grpc.add_InteroptServiceServicer_to_server(self.service, server)
+        # Add both services to the server
+        cs_grpc.add_ConfigurationServiceServicer_to_server(self.config_service, server)
+        ios_grpc.add_InteroptServiceServicer_to_server(self.interopt_service, server)
+
         listen_addr = f'[::]:{self.grpc_port}'
         server.add_insecure_port(listen_addr)
         logging.info(f'Serving gRPC on {listen_addr}')

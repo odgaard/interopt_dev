@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from dataclasses import dataclass
 from interopt.search_space import SearchSpace
 
-# Redefine ProblemDefinition with Pydantic
-class ProblemDefinition(BaseModel):
+@dataclass
+class ProblemDefinition:
     name: str
     search_space: SearchSpace
